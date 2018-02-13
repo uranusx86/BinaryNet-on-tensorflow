@@ -1,10 +1,10 @@
 import tensorflow as tf
-import tf_binary as binary
+import binary_layer as binary
 from tensorflow.examples.tutorials.mnist import input_data
 
 def fully_connect_bn(pre_layer, output_dim, act, use_bias, training):
     pre_act = binary.dense_binary(pre_layer, output_dim, use_bias=use_bias)
-    bn = tf.layers.batch_normalization(pre_act, momentum=0.9, epsilon=1e-4, training=training)
+    bn = binary.batch_normalization(pre_act, momentum=0.9, epsilon=1e-4, training=training)
     #bn = tf.layers.batch_normalization(pre_act, momentum=0.99, epsilon=0.00001, training=training)
     if act == None:
         output = bn
@@ -29,8 +29,10 @@ layer0 = tf.layers.dropout(x, rate=0.2)
 
 layer1 = fully_connect_bn(layer0, 4096, act=binary.binary_tanh_unit, use_bias=False, training=training)
 layer1_dp = tf.layers.dropout(layer1, rate=0.5)
+
 layer2 = fully_connect_bn(layer1_dp, 4096, act=binary.binary_tanh_unit, use_bias=False, training=training)
 layer2_dp = tf.layers.dropout(layer2, rate=0.5)
+
 layer3 = fully_connect_bn(layer2_dp, 4096, act=binary.binary_tanh_unit, use_bias=False, training=training)
 layer3_dp = tf.layers.dropout(layer3, rate=0.5)
 
@@ -46,9 +48,10 @@ lr_start = 0.003
 lr_end = 0.0000003
 lr = tf.Variable(lr_start, name="lr")
 
+
 opt = tf.train.AdamOptimizer(lr)
 update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-with tf.control_dependencies(update_ops):
+with tf.control_dependencies(update_ops):   # when training, the moving_mean and moving_variance in the BN need to be updated.
     train_op = opt.apply_gradients(binary.compute_grads(loss, opt))
 
 accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(layer4, 1), tf.argmax(target, 1)), tf.float32))

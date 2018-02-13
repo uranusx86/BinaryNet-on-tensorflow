@@ -125,7 +125,7 @@ class Dense_BinaryLayer(tf.layers.Dense):
         shape = inputs.get_shape().as_list()
 
         # binarization weight
-        self.b_kernel = binarization(self.kernel, self.H)
+        self.b_kernel.assign(binarization(self.kernel, self.H))
         r_kernel = self.kernel
         self.kernel = self.b_kernel
 
@@ -322,6 +322,102 @@ def conv2d_binary(inputs,
                 _scope = name)
     return layer.apply(inputs)
 
+# Not yet binarized
+class BatchNormalization(tf.layers.BatchNormalization):
+  def __init__(self,
+               axis = -1,
+               momentum = 0.99,
+               epsilon = 1e-3,
+               center = True,
+               scale = True,
+               beta_initializer = tf.zeros_initializer(),
+               gamma_initializer = tf.ones_initializer(),
+               moving_mean_initializer = tf.zeros_initializer(),
+               moving_variance_initializer = tf.ones_initializer(),
+               beta_regularizer = None,
+               gamma_regularizer = None,
+               beta_constraint = None,
+               gamma_constraint = None,
+               renorm = False,
+               renorm_clipping = None,
+               renorm_momentum = 0.99,
+               fused = None,
+               trainable = True,
+               name = None,
+               **kwargs):
+      super(BatchNormalization, self).__init__(axis = axis,
+                                     momentum = momentum,
+                                     epsilon = epsilon,
+                                     center = center,
+                                     scale = scale,
+                                     beta_initializer = beta_initializer,
+                                     gamma_initializer = gamma_initializer,
+                                     moving_mean_initializer = moving_mean_initializer,
+                                     moving_variance_initializer = moving_variance_initializer,
+                                     beta_regularizer = beta_regularizer,
+                                     gamma_regularizer = gamma_regularizer,
+                                     beta_constraint = beta_constraint,
+                                     gamma_constraint = gamma_constraint,
+                                     renorm = renorm,
+                                     renorm_clipping = renorm_clipping,
+                                     renorm_momentum = renorm_momentum,
+                                     fused = fused,
+                                     trainable = trainable,
+                                     name = name,
+                                     **kwargs)
+      all_layers.append(self)
+
+  def build(self, input_shape):
+      super(BatchNormalization, self).build(input_shape)
+      self.W_LR_scale = np.float32(1.)
+
+# Functional interface for the batch normalization layer.
+def batch_normalization(inputs,
+                        axis=-1,
+                        momentum=0.99,
+                        epsilon=1e-3,
+                        center=True,
+                        scale=True,
+                        beta_initializer=tf.zeros_initializer(),
+                        gamma_initializer=tf.ones_initializer(),
+                        moving_mean_initializer=tf.zeros_initializer(),
+                        moving_variance_initializer=tf.ones_initializer(),
+                        beta_regularizer=None,
+                        gamma_regularizer=None,
+                        beta_constraint=None,
+                        gamma_constraint=None,
+                        training=False,
+                        trainable=True,
+                        name=None,
+                        reuse=None,
+                        renorm=False,
+                        renorm_clipping=None,
+                        renorm_momentum=0.99,
+                        fused=None):
+    layer = BatchNormalization(axis = axis,
+                              momentum = momentum,
+                              epsilon = epsilon,
+                              center = center,
+                              scale = scale,
+                              beta_initializer = beta_initializer,
+                              gamma_initializer = gamma_initializer,
+                              moving_mean_initializer = moving_mean_initializer,
+                              moving_variance_initializer = moving_variance_initializer,
+                              beta_regularizer = beta_regularizer,
+                              gamma_regularizer = gamma_regularizer,
+                              beta_constraint = beta_constraint,
+                              gamma_constraint = gamma_constraint,
+                              renorm = renorm,
+                              renorm_clipping = renorm_clipping,
+                              renorm_momentum = renorm_momentum,
+                              fused = fused,
+                              trainable = trainable,
+                              name = name,
+                              dtype = inputs.dtype.base_dtype,
+                              _reuse = reuse,
+                              _scope = name)
+    return layer.apply(inputs, training = training)
+
 # This function computes the gradient of the binary weights
 #
 # use binary weight compute gradients
@@ -331,28 +427,26 @@ def compute_grads(loss, opt):
     gradients_list  = []
     parameters_list = []
 
-    for layer in all_layers[::-1]:
-        # binary weight and bias
-        params = []
-        '''
+
+    for layer in all_layers:
         for var in layer.trainable_variables:
             if not var.name.endswith('kernel:0'):
-                params.append(var)
+                param = var
             else:
-                params.append(layer.b_kernel)
-        '''
-        params=layer.b_kernel
+                param = layer.b_kernel
 
-        #if len(params) > 0:
-        #compute gradients for params
-        grad = tf.gradients(loss, params)  # if len(params)=n, return [grad[0],...,grad[n-1]]
+            #if len(params) > 0:
+            #compute gradients for params
+            grad = tf.gradients(loss, param)  # if len(param)=n, return [grad[0],...,grad[n-1]]
 
-        #process gradients
-        clipped_gradients = clipping_scaling(params, grad[0], layer.W_LR_scale, layer.H)
+            #process gradients
+            if var.name.endswith('gamma:0') or var.name.endswith('beta:0'): # for BN
+                clipped_gradients = grad[0]
+            else:
+                clipped_gradients = clipping_scaling(param, grad[0], layer.W_LR_scale, layer.H)
 
-        gradients_list.append(clipped_gradients)
-        #parameters_list.append(layer.trainable_variables) # update real value weight
-        parameters_list.append(layer.kernel)
+            gradients_list.append(clipped_gradients)
+            parameters_list.append(param)
 
     print(gradients_list)
     print(parameters_list)
@@ -360,11 +454,11 @@ def compute_grads(loss, opt):
 
 
 # This functions clips the weights after the parameter update
-def clipping_scaling(gradient, update_gradients, W_LR_scale, H):
+def clipping_scaling(weight, new_weight, W_LR_scale, H):
     print("W_LR_scale = "+str(W_LR_scale))
     print("H = "+str(H))
     #W_LR_scale為learning_rate擴大倍數，updates[param]為更新後的權重，param為未更新權重
-    #grad_scale = gradient + W_LR_scale*(tf.subtract(update_gradients, gradient))
-    grad_clip = tf.clip_by_value(update_gradients, -H, H)
+    #weight_scale = weight + W_LR_scale*(tf.subtract(new_weight, weight))
+    weight_clip = tf.clip_by_value(new_weight, -H, H)
 
-    return grad_clip
+    return weight_clip
