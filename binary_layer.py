@@ -11,16 +11,25 @@ all_layers = []
 def hard_sigmoid(x):
     return tf.clip_by_value((x+1.)/2., 0, 1)
 
+def round_through(x):
+    '''Element-wise rounding to the closest integer with full gradient propagation.
+    A trick from [Sergey Ioffe](http://stackoverflow.com/a/36480182)
+    a op that behave as f(x) in forward mode,
+    but as g(x) in the backward mode.
+    '''
+    rounded = tf.round(x)
+    return x + tf.stop_gradient(rounded - x)
+
 # The neurons' activations binarization function
 # It behaves like the sign function during forward propagation
 # And like:
 #   hard_tanh(x) = 2*hard_sigmoid(x)-1
 # during back propagation
 def binary_tanh_unit(x):
-    return 2.*hard_sigmoid(x)-1.
+    return 2.*round_through(hard_sigmoid(x))-1.
 
 def binary_sigmoid_unit(x):
-    return hard_sigmoid(x)
+    return round_through(hard_sigmoid(x))
 
 # The weights' binarization function,
 # taken directly from the BinaryConnect github repository
@@ -35,7 +44,7 @@ def binarization(W, H, binary=True, deterministic=False, stochastic=False, srng=
 
     else:
         # [-1,1] -> [0,1]
-        Wb = hard_sigmoid(W/H)
+        #Wb = hard_sigmoid(W/H)
         # Wb = T.clip(W/H,-1,1)
 
         # Stochastic BinaryConnect
@@ -48,10 +57,12 @@ def binarization(W, H, binary=True, deterministic=False, stochastic=False, srng=
         # Deterministic BinaryConnect (round to nearest)
         #else:
         # print("det")
-        Wb = tf.round(Wb)
+        #Wb = round_through(Wb)
 
         # 0 or 1 -> -1 or 1
-        Wb = tf.where(tf.equal(Wb,tf.constant(1.0)), tf.constant(H, shape=dim), tf.constant(-H, shape=dim))
+        #Wb = tf.where(tf.equal(Wb,tf.constant(1.0)), tf.constant(H, shape=dim), tf.constant(-H, shape=dim))
+        #Wb = H * Wb
+        Wb = H * binary_tanh_unit(W / H)
 
     return Wb
 
@@ -103,21 +114,14 @@ class Dense_BinaryLayer(tf.layers.Dense):
         self.W_LR_scale = np.float32(1. / self.H)                      # each layer learning rate
 
         self.kernel_initializer = tf.random_uniform_initializer(-self.H, self.H)
+        self.kernel_constraint = lambda w: tf.clip_by_value(w, -self.H, self.H)
+
+        self.b_kernel = 0  # add_variable must execute before call build()
 
         super(Dense_BinaryLayer, self).build(input_shape)
-        self.built = False
-
-        self.b_kernel = self.add_variable('binary_weight',
-                                    shape=[input_shape[-1], self.units],
-                                    initializer=self.kernel_initializer,
-                                    regularizer=self.kernel_regularizer,
-                                    constraint=self.kernel_constraint,
-                                    dtype=self.dtype,
-                                    trainable=False)
-        self.built = True
 
         tf.add_to_collection('real_weight', self.kernel)
-        tf.add_to_collection('binary_weight', self.b_kernel)
+        #tf.add_to_collection('binary_weight', self.b_kernel)
 
 
     def call(self, inputs):
@@ -125,22 +129,22 @@ class Dense_BinaryLayer(tf.layers.Dense):
         shape = inputs.get_shape().as_list()
 
         # binarization weight
-        self.b_kernel.assign(binarization(self.kernel, self.H))
-        r_kernel = self.kernel
-        self.kernel = self.b_kernel
+        self.b_kernel = binarization(self.kernel, self.H)
+        #r_kernel = self.kernel
+        #self.kernel = self.b_kernel
 
         if len(shape) > 2:
             # Broadcasting is required for the inputs.
-            outputs = standard_ops.tensordot(inputs, self.kernel, [[len(shape) - 1], [0]])
+            outputs = standard_ops.tensordot(inputs, self.b_kernel, [[len(shape) - 1], [0]])
             # Reshape the output back to the original ndim of the input.
             if context.in_graph_mode():
                 output_shape = shape[:-1] + [self.units]
                 outputs.set_shape(output_shape)
         else:
-            outputs = standard_ops.matmul(inputs, self.kernel)
+            outputs = standard_ops.matmul(inputs, self.b_kernel)
 
         # restore weight
-        self.kernel = r_kernel
+        #self.kernel = r_kernel
 
         if self.use_bias:
             outputs = nn.bias_add(outputs, self.bias)
@@ -418,11 +422,9 @@ def batch_normalization(inputs,
                               _scope = name)
     return layer.apply(inputs, training = training)
 
+################ Deprecated #############
 # This function computes the gradient of the binary weights
-#
-# use binary weight compute gradients
-# use optimizer to get float value updated weight value by given gradient
-# clipping float value updated weight, and apply
+'''
 def compute_grads(loss, opt):
     gradients_list  = []
     parameters_list = []
@@ -445,8 +447,9 @@ def compute_grads(loss, opt):
             else:
                 clipped_gradients = clipping_scaling(param, grad[0], layer.W_LR_scale, layer.H)
 
+
             gradients_list.append(clipped_gradients)
-            parameters_list.append(param)
+            parameters_list.append(var)      # Note: update real value weight
 
     print(gradients_list)
     print(parameters_list)
@@ -454,11 +457,12 @@ def compute_grads(loss, opt):
 
 
 # This functions clips the weights after the parameter update
-def clipping_scaling(weight, new_weight, W_LR_scale, H):
+def clipping_scaling(weight, grad, W_LR_scale, H):
     print("W_LR_scale = "+str(W_LR_scale))
     print("H = "+str(H))
     #W_LR_scale為learning_rate擴大倍數，updates[param]為更新後的權重，param為未更新權重
-    #weight_scale = weight + W_LR_scale*(tf.subtract(new_weight, weight))
-    weight_clip = tf.clip_by_value(new_weight, -H, H)
+    #weight_scale = weight + W_LR_scale*(tf.subtract(grad, weight))
+    weight_clip = tf.clip_by_value(grad, -H, H)
 
     return weight_clip
+'''
