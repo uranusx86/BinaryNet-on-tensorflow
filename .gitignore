@@ -102,3 +102,4 @@ ENV/
 
 # model
 model/
+model_layerLR/

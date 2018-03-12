@@ -25,12 +25,10 @@ training = tf.placeholder(tf.bool)
 
 mnist = input_data.read_data_sets('./MNIST_data/', one_hot=True)
 # convert class vectors to binary class vectors
-'''
 for i in range(mnist.train.images.shape[0]):
     mnist.train.images[i] = mnist.train.images[i] * 2 - 1
 for i in range(mnist.test.images.shape[0]):
     mnist.test.images[i] = mnist.test.images[i] * 2 - 1
-'''
 for i in range(mnist.train.labels.shape[0]):
     mnist.train.labels[i] = mnist.train.labels[i] * 2 - 1 # -1 or 1 for hinge loss
 for i in range(mnist.test.labels.shape[0]):
@@ -59,15 +57,26 @@ loss = tf.keras.metrics.squared_hinge(target, layer4)
 
 lr_start = 0.003
 lr_end = 0.0000003
-lr = tf.Variable(lr_start, name="lr")
+#lr = tf.Variable(lr_start, name="lr")
 
 
+layers_lr = []
+train_op = []
+update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+for idx,layer in enumerate(binary.get_all_layers()):
+    print(layer.W_LR_scale)
+    var = layer.trainable_variables
+    layers_lr.append( tf.Variable(lr_start * layer.W_LR_scale, name="lr" + layer.name) )
+    with tf.control_dependencies(update_ops):   # when training, the moving_mean and moving_variance in the BN need to be updated.
+        train_op.append( tf.train.AdamOptimizer(layers_lr[idx]).minimize(loss, var_list=var) )
+
+'''
 opt = tf.train.AdamOptimizer(lr)
 update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
 with tf.control_dependencies(update_ops):   # when training, the moving_mean and moving_variance in the BN need to be updated.
     train_op = opt.minimize(loss)
     #train_op = opt.apply_gradients(binary.compute_grads(loss, opt))
-
+'''
 accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(layer4, 1), tf.argmax(target, 1)), tf.float32))
 
 sess = tf.Session()
@@ -75,21 +84,32 @@ sess.run(tf.global_variables_initializer())
 saver = tf.train.Saver()
 #saver.restore(sess, "model/model.ckpt")
 
-epochs = 1000* (10)
+epochs = 1000*10
 lr_decay = (lr_end / lr_start)**(1. / epochs)
 for i in range(epochs):
     batch_xs, batch_ys = mnist.train.next_batch(100)
     sess.run(train_op, feed_dict={x: batch_xs, target: batch_ys, training: True})
 
-    print("acc %g, lr %g" % (sess.run(
-                              accuracy, feed_dict={
+    '''
+    print("acc %g, lr0 %g, lr1 %g, lr2 %g, lr3 %g" % (sess.run(
+                              [accuracy, layers_lr[0], layers_lr[1], layers_lr[2], layers_lr[3]],
+                              feed_dict={
                                   x: mnist.test.images,
                                   target: mnist.test.labels,
                                   training: False
-                              }),
-                            sess.run(lr)))
+                              })))
+    '''
+    print(sess.run([accuracy, layers_lr[0], layers_lr[1], layers_lr[2], layers_lr[3]],
+          feed_dict={
+              x: mnist.test.images,
+              target: mnist.test.labels,
+              training: False
+          }))
+
 
     new_lr = lr_start * lr_decay**i
-    sess.run(lr.assign(new_lr))
+    #sess.run(lr.assign(new_lr))
+    for idx,layer in enumerate(binary.get_all_layers()):
+        sess.run(layers_lr[idx].assign(new_lr * layer.W_LR_scale) )
 
 save_path = saver.save(sess, "model/model.ckpt")

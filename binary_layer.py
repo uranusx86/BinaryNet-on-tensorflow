@@ -57,11 +57,10 @@ def binarization(W, H, binary=True, deterministic=False, stochastic=False, srng=
         # Deterministic BinaryConnect (round to nearest)
         #else:
         # print("det")
-        #Wb = round_through(Wb)
+        # Wb = tf.round(Wb)
 
         # 0 or 1 -> -1 or 1
-        #Wb = tf.where(tf.equal(Wb,tf.constant(1.0)), tf.constant(H, shape=dim), tf.constant(-H, shape=dim))
-        #Wb = H * Wb
+        #Wb = tf.where(tf.equal(Wb,tf.constant(1.0)), tf.constant(H, shape=dim), tf.constant(-H, shape=dim))  # cant differential
         Wb = H * binary_tanh_unit(W / H)
 
     return Wb
@@ -107,11 +106,13 @@ class Dense_BinaryLayer(tf.layers.Dense):
     def build(self, input_shape):
         num_inputs = tensor_shape.TensorShape(input_shape).as_list()[-1]
         num_units = self.units
-        print(num_inputs)
         print(num_units)
 
-        self.H = np.float32(np.sqrt(1.5 / (num_inputs + num_units)))   # weight init method
-        self.W_LR_scale = np.float32(1. / self.H)                      # each layer learning rate
+        if self.H == "Glorot":
+            self.H = np.float32(np.sqrt(1.5 / (num_inputs + num_units)))   # weight init method
+        self.W_LR_scale = np.float32(1. / np.sqrt(1.5 / (num_inputs + num_units))) # each layer learning rate
+        print("H = ", self.H)
+        print("LR scale = ", self.W_LR_scale)
 
         self.kernel_initializer = tf.random_uniform_initializer(-self.H, self.H)
         self.kernel_constraint = lambda w: tf.clip_by_value(w, -self.H, self.H)
@@ -421,6 +422,9 @@ def batch_normalization(inputs,
                               _reuse = reuse,
                               _scope = name)
     return layer.apply(inputs, training = training)
+
+def get_all_layers():
+    return all_layers;
 
 ################ Deprecated #############
 # This function computes the gradient of the binary weights
