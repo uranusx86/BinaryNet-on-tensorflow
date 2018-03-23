@@ -101,6 +101,9 @@ ENV/
 .mypy_cache/
 
 # model
-mnist/
-cifar10/
+mnist/MNIST_data/
+mnist/model/*
+cifar10/cifar10_data/
+cifar10/model/*
+cifar10/tf_reader/
 cifar10_inference.py
