@@ -11,7 +11,7 @@ python mnist.py
 ## Accuracy
 | DataSet | accuracy |
 |---------|----------|
-| MNIST   |  98.1%   |
+| MNIST   |  99.04%  |
 
 ## Ref
 ```
