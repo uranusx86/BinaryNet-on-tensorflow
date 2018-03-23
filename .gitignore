@@ -101,5 +101,6 @@ ENV/
 .mypy_cache/
 
 # model
-model/
-model_layerLR/
+mnist/
+cifar10/
+cifar10_inference.py
